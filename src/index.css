@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, monospace;
+}
+
+:root {
+  --text-h: #0f172a;
+  --bg: #f1f5f9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text-h: #f8fafc;
+    --bg: #0f172a;
+  }
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text-h);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+#root {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom Animation for Node Details Drawer */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Custom Animation for settings Drawer */
+@keyframes slideLeft {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
