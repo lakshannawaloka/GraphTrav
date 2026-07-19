@@ -23,8 +23,18 @@ export function GraphCanvas({
   const cyRef = useRef(null);
   const layoutRef = useRef(null);
   const lastTapRef = useRef({ nodeId: null, timestamp: 0 });
+  const onNodeSelectRef = useRef(onNodeSelect);
+  const onNodeEditRef = useRef(onNodeEdit);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState(null);
   const viewportConfig = getViewportConfig(layoutName, treeLayout);
+
+  useEffect(() => {
+    onNodeSelectRef.current = onNodeSelect;
+  }, [onNodeSelect]);
+
+  useEffect(() => {
+    onNodeEditRef.current = onNodeEdit;
+  }, [onNodeEdit]);
 
   const teardownCy = () => {
     if (layoutRef.current) {
@@ -257,11 +267,11 @@ export function GraphCanvas({
         const now = Date.now();
         const previousTap = lastTapRef.current;
         if (
-          onNodeEdit
+          onNodeEditRef.current
           && previousTap.nodeId === nodeId
           && now - previousTap.timestamp <= 300
         ) {
-          onNodeEdit(nodeId, node.data('heuristicLabel'));
+          onNodeEditRef.current(nodeId, node.data('heuristicLabel'));
           lastTapRef.current = { nodeId: null, timestamp: 0 };
           return;
         }
@@ -279,8 +289,8 @@ export function GraphCanvas({
         };
 
         setSelectedNodeInfo(nodeData);
-        if (onNodeSelect) {
-          onNodeSelect(nodeId, nodeData);
+        if (onNodeSelectRef.current) {
+          onNodeSelectRef.current(nodeId, nodeData);
         }
 
         // Visual highlights
@@ -309,8 +319,8 @@ export function GraphCanvas({
           lastTapRef.current = { nodeId: null, timestamp: 0 };
           cy.elements().removeClass('faded').removeClass('highlighted').removeClass('neighbor');
           setSelectedNodeInfo(null);
-          if (onNodeSelect) {
-            onNodeSelect(null, null);
+          if (onNodeSelectRef.current) {
+            onNodeSelectRef.current(null, null);
           }
         }
       });
@@ -321,7 +331,7 @@ export function GraphCanvas({
     } catch (err) {
       console.error("Cytoscape render error: ", err);
     }
-  }, [elements, layoutName, nodeColor, nodeShape, edgeColor, edgeType, directed, showLabels, treeLayout, onNodeEdit, onNodeSelect]);
+  }, [elements, layoutName, nodeColor, nodeShape, edgeColor, edgeType, directed, showLabels, treeLayout]);
 
   useEffect(() => {
     if (!cyRef.current) {
