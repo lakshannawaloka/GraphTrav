@@ -68,6 +68,7 @@ export function ControlPanel({
   traversalOrder = [],
   goalPath = [],
   goalReached = false,
+  simulationMetrics = [],
 }) {
   const [newNodeName, setNewNodeName] = useState('');
   const [edgeSource, setEdgeSource] = useState('');
@@ -248,6 +249,24 @@ export function ControlPanel({
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-3 leading-relaxed font-sans">
               {simulationSummary}
             </p>
+          )}
+
+          {simulationMetrics.length > 0 && !simulationError && (
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {simulationMetrics.map((metric) => (
+                <div
+                  key={metric.label}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/70"
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    {metric.label}
+                  </div>
+                  <div className="mt-1 font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    {metric.value}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
 
           {traversalOrder.length > 0 && (

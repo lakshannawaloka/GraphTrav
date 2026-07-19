@@ -454,6 +454,35 @@ function App() {
 
   const goalPath = useMemo(() => currentSimulationStep?.goalPath || [], [currentSimulationStep]);
   const goalReached = Boolean(currentSimulationStep?.goalFound);
+  const simulationMetrics = useMemo(() => {
+    if (!currentSimulationStep) {
+      return [];
+    }
+
+    if (searchAlgorithm === 'ucs') {
+      return [
+        { label: 'Path Cost', value: currentSimulationStep.cost ?? 0 },
+      ];
+    }
+
+    if (searchAlgorithm === 'greedy') {
+      return [
+        { label: 'Path Cost', value: currentSimulationStep.cost ?? 0 },
+        { label: 'Heuristic', value: currentSimulationStep.heuristic ?? 0 },
+        { label: 'Priority', value: currentSimulationStep.priority ?? 0 },
+      ];
+    }
+
+    if (searchAlgorithm === 'astar') {
+      return [
+        { label: 'Path Cost', value: currentSimulationStep.cost ?? 0 },
+        { label: 'Heuristic', value: currentSimulationStep.heuristic ?? 0 },
+        { label: 'Priority (g + h)', value: currentSimulationStep.priority ?? 0 },
+      ];
+    }
+
+    return [];
+  }, [currentSimulationStep, searchAlgorithm]);
 
   const clearSimulationTimer = () => {
     if (simulationTimerRef.current) {
@@ -865,6 +894,7 @@ function App() {
             traversalOrder={traversalOrder}
             goalPath={goalPath}
             goalReached={goalReached}
+            simulationMetrics={simulationMetrics}
           />
 
           {/* Quick Syntax Info Card */}
