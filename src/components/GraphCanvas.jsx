@@ -4,24 +4,6 @@ import { Card } from './Ui/Card';
 import { Button } from './Ui/Button';
 import { createLayoutConfig, getViewportConfig } from '../utils/graphLayout';
 
-function createTopologySignature(elements) {
-  const nodes = [];
-  const edges = [];
-
-  elements.forEach((element) => {
-    if (element.data?.source && element.data?.target) {
-      edges.push(`${element.data.id || ''}:${element.data.source}->${element.data.target}`);
-    } else if (element.data?.id) {
-      nodes.push(element.data.id);
-    }
-  });
-
-  nodes.sort();
-  edges.sort();
-
-  return `${nodes.join('|')}__${edges.join('|')}`;
-}
-
 export function GraphCanvas({
   elements = [],
   layoutName = 'cose',
@@ -41,7 +23,6 @@ export function GraphCanvas({
   const cyRef = useRef(null);
   const layoutRef = useRef(null);
   const lastTapRef = useRef({ nodeId: null, timestamp: 0 });
-  const topologySignatureRef = useRef('');
   const [selectedNodeInfo, setSelectedNodeInfo] = useState(null);
   const viewportConfig = getViewportConfig(layoutName, treeLayout);
 
@@ -71,44 +52,21 @@ export function GraphCanvas({
     }
 
     try {
-      const nextTopologySignature = createTopologySignature(elements);
-      const preservePositions = topologySignatureRef.current === nextTopologySignature && cyRef.current;
-      const previousPositions = preservePositions
-        ? cyRef.current.nodes().reduce((positions, node) => {
-            positions[node.id()] = { ...node.position() };
-            return positions;
-          }, {})
-        : {};
-
       teardownCy();
 
-      const cyElements = JSON.parse(JSON.stringify(elements));
-      if (preservePositions) {
-        cyElements.forEach((element) => {
-          if (!element.data?.source && previousPositions[element.data?.id]) {
-            element.position = previousPositions[element.data.id];
-          }
-        });
-      }
-
-      const layout = preservePositions
-        ? {
-            name: 'preset',
-            fit: false,
-          }
-        : createLayoutConfig({
-            layoutName,
-            elements,
-            treeLayout,
-            animate: elements.length < 100,
-            animationDuration: 400,
-            fit: true,
-            padding: viewportConfig.fitPadding,
-          });
+      const layout = createLayoutConfig({
+        layoutName,
+        elements,
+        treeLayout,
+        animate: elements.length < 100,
+        animationDuration: 400,
+        fit: true,
+        padding: viewportConfig.fitPadding,
+      });
 
       const cy = cytoscape({
         container: containerRef.current,
-        elements: cyElements,
+        elements: JSON.parse(JSON.stringify(elements)), // Deep copy to avoid mutating props
         minZoom: viewportConfig.minZoom,
         maxZoom: viewportConfig.maxZoom,
         style: [
@@ -282,7 +240,6 @@ export function GraphCanvas({
       });
 
       cyRef.current = cy;
-      topologySignatureRef.current = nextTopologySignature;
 
       const initialLayout = cy.layout(layout);
       layoutRef.current = initialLayout;

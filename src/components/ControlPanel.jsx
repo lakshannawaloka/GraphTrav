@@ -75,7 +75,6 @@ export function ControlPanel({
   const [edgeWeight, setEdgeWeight] = useState('');
   const [addNodeError, setAddNodeError] = useState('');
   const [addEdgeError, setAddEdgeError] = useState('');
-  const usesHeuristics = selectedAlgorithm === 'greedy' || selectedAlgorithm === 'astar';
   const visitOrderLabel = selectedAlgorithm === 'dfs'
     ? 'LIFO Visit Order'
     : selectedAlgorithm === 'bfs'
@@ -166,21 +165,19 @@ export function ControlPanel({
             />
           </div>
 
-          {usesHeuristics && (
-            <div className="flex flex-col gap-1.5 mb-3">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 font-heading">
-                Heuristics
-              </label>
-              <textarea
-                value={heuristicInput}
-                onChange={(e) => onHeuristicInputChange?.(e.target.value)}
-                placeholder={'A: 6\nB: 4\nC: 3\nG: 0\n\nor\n\n[["A", 6], ["B", 4], ["G", 0]]'}
-                rows={4}
-                title={'Use Node: value, a JSON object like {"A":6,"B":4}, or a JSON list like [["A",6],["B",4]]. Missing values default to 0.'}
-                className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 px-3 text-xs text-slate-900 dark:text-slate-100 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15 resize-y"
-              />
-            </div>
-          )}
+          <div className="flex flex-col gap-1.5 mb-3">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 font-heading">
+              Heuristics
+            </label>
+            <textarea
+              value={heuristicInput}
+              onChange={(e) => onHeuristicInputChange?.(e.target.value)}
+              placeholder={'A: 6\nB: 4\nC: 3\nG: 0\n\nor\n\n[["A", 6], ["B", 4], ["G", 0]]'}
+              rows={4}
+              title={'Use Node: value, a JSON object like {"A":6,"B":4}, or a JSON list like [["A",6],["B",4]]. Missing values default to 0.'}
+              className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 px-3 text-xs text-slate-900 dark:text-slate-100 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15 resize-y"
+            />
+          </div>
 
           <div className="flex flex-col gap-1.5 mb-4">
             <div className="flex items-center justify-between gap-3">

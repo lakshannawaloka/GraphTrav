@@ -11,7 +11,6 @@ import { TreeLayoutSettings } from './components/TreeLayoutSettings';
 import { createSearchSimulation, getNodeIds, SEARCH_ALGORITHMS } from './utils/searchSimulation';
 import { getGraphNodeOptions } from './utils/graphLayout';
 
-const DEFAULT_PRESET = 'A: B C\nB: D E\nC: F G\nD:\nE:\nF:\nG:';
 const DEFAULT_TREE_LAYOUT = {
   rootNode: 'auto',
   direction: 'top-to-bottom',
@@ -350,7 +349,7 @@ function serializeHeuristics(heuristics, previousInput) {
 }
 
 function App() {
-  const [adjacencyList, setAdjacencyList] = useState(DEFAULT_PRESET);
+  const [adjacencyList, setAdjacencyList] = useState('');
   const [isStylingOpen, setIsStylingOpen] = useState(false);
   const simulationTimerRef = useRef(null);
 
@@ -389,9 +388,8 @@ function App() {
   }, [simulationStepIndex, simulationSteps]);
 
   const heuristicParseResult = useMemo(() => parseHeuristicsInput(heuristicInput), [heuristicInput]);
-  const usesHeuristics = searchAlgorithm === 'greedy' || searchAlgorithm === 'astar';
   const graphElements = useMemo(() => {
-    const heuristics = usesHeuristics && !heuristicParseResult.error
+    const heuristics = !heuristicParseResult.error
       ? heuristicParseResult.heuristics || {}
       : {};
 
@@ -415,7 +413,7 @@ function App() {
         },
       };
     });
-  }, [heuristicParseResult.error, heuristicParseResult.heuristics, parseResult.elements, usesHeuristics]);
+  }, [heuristicParseResult.error, heuristicParseResult.heuristics, parseResult.elements]);
 
   const simulationSummary = useMemo(() => {
     if (simulationRunning && currentSimulationStep) {
