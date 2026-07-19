@@ -416,9 +416,11 @@ function App() {
   }, [heuristicParseResult.error, heuristicParseResult.heuristics, parseResult.elements]);
 
   const simulationSummary = useMemo(() => {
+    const shouldShowCostInSummary = !['bfs', 'dfs'].includes(searchAlgorithm);
+
     if (simulationRunning && currentSimulationStep) {
       if (currentSimulationStep.goalFound) {
-        const costSuffix = currentSimulationStep.cost !== null && currentSimulationStep.cost !== undefined
+        const costSuffix = shouldShowCostInSummary && currentSimulationStep.cost !== null && currentSimulationStep.cost !== undefined
           ? ` Cost: ${currentSimulationStep.cost}.`
           : '';
         return `${searchAlgorithm.toUpperCase()} reached ${currentSimulationStep.node}. Path: ${currentSimulationStep.goalPath.join(' -> ')}.${costSuffix}`;
@@ -429,7 +431,7 @@ function App() {
 
     if (simulationStepIndex >= 0 && simulationSteps.length > 0) {
       if (currentSimulationStep?.goalFound) {
-        const costSuffix = currentSimulationStep.cost !== null && currentSimulationStep.cost !== undefined
+        const costSuffix = shouldShowCostInSummary && currentSimulationStep.cost !== null && currentSimulationStep.cost !== undefined
           ? ` Cost: ${currentSimulationStep.cost}.`
           : '';
         return `${searchAlgorithm.toUpperCase()} found a path from ${startNode.trim()} to ${goalNode.trim()}.${costSuffix}`;
@@ -461,23 +463,28 @@ function App() {
 
     if (searchAlgorithm === 'ucs') {
       return [
-        { label: 'Path Cost', value: currentSimulationStep.cost ?? 0 },
+        { label: 'Path Cost', value: String(currentSimulationStep.cost ?? 0) },
       ];
     }
 
     if (searchAlgorithm === 'greedy') {
+      const heuristic = currentSimulationStep.heuristic ?? 0;
+      const priority = currentSimulationStep.priority ?? 0;
       return [
-        { label: 'Path Cost', value: currentSimulationStep.cost ?? 0 },
-        { label: 'Heuristic', value: currentSimulationStep.heuristic ?? 0 },
-        { label: 'Priority', value: currentSimulationStep.priority ?? 0 },
+        { label: 'Path Cost', value: String(currentSimulationStep.cost ?? 0) },
+        { label: 'Heuristic', value: String(heuristic) },
+        { label: 'Priority', value: `h = ${priority}` },
       ];
     }
 
     if (searchAlgorithm === 'astar') {
+      const pathCost = currentSimulationStep.cost ?? 0;
+      const heuristic = currentSimulationStep.heuristic ?? 0;
+      const priority = currentSimulationStep.priority ?? 0;
       return [
-        { label: 'Path Cost', value: currentSimulationStep.cost ?? 0 },
-        { label: 'Heuristic', value: currentSimulationStep.heuristic ?? 0 },
-        { label: 'Priority (g + h)', value: currentSimulationStep.priority ?? 0 },
+        { label: 'Path Cost', value: String(pathCost) },
+        { label: 'Heuristic', value: String(heuristic) },
+        { label: 'Priority (g + h)', value: `${pathCost} + ${heuristic} = ${priority}` },
       ];
     }
 
