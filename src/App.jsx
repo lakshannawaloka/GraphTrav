@@ -7,9 +7,19 @@ import { Alert } from './components/Ui/Alert';
 import { Select } from './components/Ui/Select';
 import { ControlPanel, LAYOUTS, SHAPES, EDGE_TYPES, NODE_COLORS, EDGE_COLORS } from './components/ControlPanel';
 import { GraphCanvas } from './components/GraphCanvas';
+import { TreeLayoutSettings } from './components/TreeLayoutSettings';
 import { createSearchSimulation, getNodeIds, SEARCH_ALGORITHMS } from './utils/searchSimulation';
+import { getGraphNodeOptions } from './utils/graphLayout';
 
 const DEFAULT_PRESET = 'A: B C\nB: D E\nC: F G\nD:\nE:\nF:\nG:';
+const DEFAULT_TREE_LAYOUT = {
+  rootNode: 'auto',
+  direction: 'top-to-bottom',
+  spacingFactor: 1.4,
+  minZoom: 0.8,
+  fitPadding: 30,
+  sortMode: 'alphabetical',
+};
 
 function parseTargetToken(token) {
   const trimmedToken = String(token).trim();
@@ -65,6 +75,280 @@ function createJsonTargetEntry(target, weight) {
   return normalizedWeight === undefined ? target : { target, weight: normalizedWeight };
 }
 
+function parseHeuristicsInput(input) {
+  const trimmedInput = input.trim();
+  if (!trimmedInput) {
+    return { heuristics: {}, error: null };
+  }
+
+  if (trimmedInput.startsWith('{') || trimmedInput.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmedInput);
+      const heuristics = {};
+
+      if (Array.isArray(parsed)) {
+        parsed.forEach((entry, index) => {
+          let nodeId = '';
+          let rawValue;
+
+          if (Array.isArray(entry)) {
+            [nodeId, rawValue] = entry;
+          } else if (entry && typeof entry === 'object') {
+            nodeId = entry.node ?? entry.id ?? entry.target ?? '';
+            rawValue = entry.value ?? entry.heuristic ?? entry.h;
+          } else {
+            throw new Error(`Heuristic item ${index + 1} must be a [node, value] pair or an object.`);
+          }
+
+          const normalizedNodeId = String(nodeId ?? '').trim();
+          const value = Number(rawValue);
+          if (!normalizedNodeId) {
+            throw new Error(`Heuristic item ${index + 1} is missing a node id.`);
+          }
+          if (!Number.isFinite(value)) {
+            throw new Error(`Heuristic "${normalizedNodeId}" must be a valid number.`);
+          }
+
+          heuristics[normalizedNodeId] = value;
+        });
+
+        return { heuristics, error: null };
+      }
+
+      if (parsed && typeof parsed === 'object') {
+        Object.entries(parsed).forEach(([nodeId, rawValue]) => {
+          const value = Number(rawValue);
+          if (!Number.isFinite(value)) {
+            throw new Error(`Heuristic "${nodeId}" must be a valid number.`);
+          }
+
+          heuristics[String(nodeId).trim()] = value;
+        });
+
+        return { heuristics, error: null };
+      }
+
+      return {
+        heuristics: null,
+        error: 'Heuristics JSON must be an object or an array.',
+      };
+    } catch (error) {
+      return {
+        heuristics: null,
+        error: error instanceof Error ? error.message : 'Invalid heuristics JSON.',
+      };
+    }
+  }
+
+  const heuristics = {};
+  const lines = trimmedInput.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index].trim();
+    if (!rawLine || rawLine.startsWith('#') || rawLine.startsWith('//')) {
+      continue;
+    }
+
+    const separatorIndex = rawLine.indexOf(':');
+    if (separatorIndex === -1) {
+      return {
+        heuristics: null,
+        error: `Heuristic line ${index + 1} must use "Node: value" format.`,
+      };
+    }
+
+    const nodeId = rawLine.slice(0, separatorIndex).trim();
+    const rawValue = rawLine.slice(separatorIndex + 1).trim();
+
+    if (!nodeId || !rawValue) {
+      return {
+        heuristics: null,
+        error: `Heuristic line ${index + 1} is incomplete.`,
+      };
+    }
+
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) {
+      return {
+        heuristics: null,
+        error: `Heuristic "${nodeId}" must be a valid number.`,
+      };
+    }
+
+    heuristics[nodeId] = value;
+  }
+
+  return { heuristics, error: null };
+}
+
+function createHeuristicBadgeDataUri(value) {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <text
+        x="32"
+        y="34"
+        text-anchor="middle"
+        dominant-baseline="middle"
+        font-family="Plus Jakarta Sans, Arial, sans-serif"
+        font-size="18"
+        font-weight="700"
+        fill="#0f172a"
+      >${String(value)}</text>
+    </svg>
+  `.trim();
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function isValidNodeName(nodeName) {
+  return Boolean(nodeName)
+    && !/\s/.test(nodeName)
+    && !nodeName.includes(':')
+    && !nodeName.includes('->')
+    && !nodeName.includes(',')
+    && !nodeName.includes('=');
+}
+
+function renameNodeInAdjacencyList(input, previousNodeId, nextNodeId) {
+  const trimmedInput = input.trim();
+  if (!trimmedInput) {
+    return input;
+  }
+
+  if (trimmedInput.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmedInput);
+      const renamed = {};
+
+      Object.entries(parsed).forEach(([source, targets]) => {
+        const normalizedSource = source.trim() === previousNodeId ? nextNodeId : source;
+        const targetList = Array.isArray(targets) ? targets : [targets];
+        renamed[normalizedSource] = targetList.map((entry) => {
+          if (Array.isArray(entry)) {
+            const [target, weight] = entry;
+            return [String(target).trim() === previousNodeId ? nextNodeId : target, weight];
+          }
+
+          if (entry && typeof entry === 'object') {
+            const rawTarget = entry.target ?? entry.node ?? entry.id;
+            if (String(rawTarget ?? '').trim() !== previousNodeId) {
+              return entry;
+            }
+
+            if ('target' in entry) {
+              return { ...entry, target: nextNodeId };
+            }
+            if ('node' in entry) {
+              return { ...entry, node: nextNodeId };
+            }
+            if ('id' in entry) {
+              return { ...entry, id: nextNodeId };
+            }
+
+            return { ...entry, target: nextNodeId };
+          }
+
+          const parsedTarget = parseTargetToken(entry);
+          if (!parsedTarget) {
+            return entry;
+          }
+
+          return parsedTarget.target === previousNodeId
+            ? formatTargetToken(nextNodeId, parsedTarget.weight)
+            : entry;
+        });
+      });
+
+      return JSON.stringify(renamed, null, 2);
+    } catch {
+      return input;
+    }
+  }
+
+  const lines = input.split('\n');
+
+  return lines.map((line) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith('#') || trimmedLine.startsWith('//')) {
+      return line;
+    }
+
+    const arrowIndex = line.indexOf('->');
+    const colonIndex = line.indexOf(':');
+    const equalsIndex = line.indexOf('=');
+
+    let separator = null;
+    let separatorIndex = -1;
+
+    if (arrowIndex !== -1) {
+      separator = '->';
+      separatorIndex = arrowIndex;
+    } else if (colonIndex !== -1) {
+      separator = ':';
+      separatorIndex = colonIndex;
+    } else if (equalsIndex !== -1) {
+      separator = '=';
+      separatorIndex = equalsIndex;
+    }
+
+    if (separator !== null) {
+      const sourcePart = line.slice(0, separatorIndex);
+      const targetsPart = line.slice(separatorIndex + separator.length);
+      const sourceTrimmed = sourcePart.trim();
+      const renamedSource = sourceTrimmed === previousNodeId ? nextNodeId : sourceTrimmed;
+      const sourcePrefix = sourcePart.replace(/\S.*$/, '');
+      const targetLeadingWhitespace = targetsPart.match(/^\s*/)?.[0] ?? ' ';
+      const trimmedTargets = targetsPart.trim();
+
+      if (!trimmedTargets) {
+        return `${sourcePrefix}${renamedSource}${separator}${targetLeadingWhitespace}`;
+      }
+
+      const targetEntries = trimmedTargets
+        .split(/[, \t]+/)
+        .map(parseTargetToken)
+        .filter(Boolean)
+        .map((entry) => (
+          entry.target === previousNodeId
+            ? formatTargetToken(nextNodeId, entry.weight)
+            : formatTargetToken(entry.target, entry.weight)
+        ));
+
+      const joiner = separator === '->' ? ', ' : ' ';
+      return `${sourcePrefix}${renamedSource}${separator}${targetLeadingWhitespace}${targetEntries.join(joiner)}`;
+    }
+
+    return trimmedLine === previousNodeId
+      ? line.replace(previousNodeId, nextNodeId)
+      : line;
+  }).join('\n');
+}
+
+function serializeHeuristics(heuristics, previousInput) {
+  const trimmedInput = previousInput.trim();
+  const entries = Object.entries(heuristics);
+
+  if (trimmedInput.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmedInput);
+      if (Array.isArray(parsed)) {
+        const usesObjectEntries = parsed.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
+        return usesObjectEntries
+          ? JSON.stringify(entries.map(([node, value]) => ({ node, value })), null, 2)
+          : JSON.stringify(entries.map(([node, value]) => [node, value]), null, 2);
+      }
+    } catch {
+      // fall through to line format
+    }
+  }
+
+  if (trimmedInput.startsWith('{')) {
+    return JSON.stringify(heuristics, null, 2);
+  }
+
+  return entries.map(([node, value]) => `${node}: ${value}`).join('\n');
+}
+
 function App() {
   const [adjacencyList, setAdjacencyList] = useState(DEFAULT_PRESET);
   const [isStylingOpen, setIsStylingOpen] = useState(false);
@@ -78,8 +362,11 @@ function App() {
   const [edgeType, setEdgeType] = useState('bezier');
   const [directed, setDirected] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
+  const [treeLayout, setTreeLayout] = useState(DEFAULT_TREE_LAYOUT);
   const [searchAlgorithm, setSearchAlgorithm] = useState('bfs');
   const [startNode, setStartNode] = useState('A');
+  const [goalNode, setGoalNode] = useState('');
+  const [heuristicInput, setHeuristicInput] = useState('');
   const [simulationSpeed, setSimulationSpeed] = useState(1);
   const [simulationError, setSimulationError] = useState('');
   const [simulationRunning, setSimulationRunning] = useState(false);
@@ -92,6 +379,7 @@ function App() {
   }, [adjacencyList]);
 
   const nodeIds = useMemo(() => getNodeIds(parseResult.elements), [parseResult.elements]);
+  const graphNodeOptions = useMemo(() => getGraphNodeOptions(parseResult.elements), [parseResult.elements]);
 
   const currentSimulationStep = useMemo(() => {
     if (simulationStepIndex < 0 || simulationStepIndex >= simulationSteps.length) {
@@ -100,21 +388,64 @@ function App() {
     return simulationSteps[simulationStepIndex];
   }, [simulationStepIndex, simulationSteps]);
 
+  const heuristicParseResult = useMemo(() => parseHeuristicsInput(heuristicInput), [heuristicInput]);
+  const usesHeuristics = searchAlgorithm === 'greedy' || searchAlgorithm === 'astar';
+  const graphElements = useMemo(() => {
+    const heuristics = usesHeuristics && !heuristicParseResult.error
+      ? heuristicParseResult.heuristics || {}
+      : {};
+
+    return parseResult.elements.map((element) => {
+      if (element.data?.source) {
+        return element;
+      }
+
+      const nodeId = element.data?.id;
+      const baseLabel = element.data?.label || nodeId;
+      const hasHeuristic = Object.prototype.hasOwnProperty.call(heuristics, nodeId);
+      const heuristicValue = hasHeuristic ? heuristics[nodeId] : null;
+
+      return {
+        ...element,
+        data: {
+          ...element.data,
+          displayLabel: baseLabel,
+          heuristicLabel: hasHeuristic ? String(heuristicValue) : '',
+          heuristicBadgeImage: hasHeuristic ? createHeuristicBadgeDataUri(heuristicValue) : '',
+        },
+      };
+    });
+  }, [heuristicParseResult.error, heuristicParseResult.heuristics, parseResult.elements, usesHeuristics]);
+
   const simulationSummary = useMemo(() => {
     if (simulationRunning && currentSimulationStep) {
+      if (currentSimulationStep.goalFound) {
+        const costSuffix = currentSimulationStep.cost !== null && currentSimulationStep.cost !== undefined
+          ? ` Cost: ${currentSimulationStep.cost}.`
+          : '';
+        return `${searchAlgorithm.toUpperCase()} reached ${currentSimulationStep.node}. Path: ${currentSimulationStep.goalPath.join(' -> ')}.${costSuffix}`;
+      }
+
       return `${searchAlgorithm.toUpperCase()} visiting ${currentSimulationStep.node}. Step ${simulationStepIndex + 1} of ${simulationSteps.length}.`;
     }
 
     if (simulationStepIndex >= 0 && simulationSteps.length > 0) {
+      if (currentSimulationStep?.goalFound) {
+        const costSuffix = currentSimulationStep.cost !== null && currentSimulationStep.cost !== undefined
+          ? ` Cost: ${currentSimulationStep.cost}.`
+          : '';
+        return `${searchAlgorithm.toUpperCase()} found a path from ${startNode.trim()} to ${goalNode.trim()}.${costSuffix}`;
+      }
+
+      if (goalNode.trim()) {
+        return `${searchAlgorithm.toUpperCase()} explored ${simulationSteps.length} node${simulationSteps.length === 1 ? '' : 's'} from ${startNode.trim()} but did not reach ${goalNode.trim()}.`;
+      }
+
       return `${searchAlgorithm.toUpperCase()} explored ${simulationSteps.length} node${simulationSteps.length === 1 ? '' : 's'} from ${startNode.trim()}.`;
     }
 
-    if (nodeIds.length > 0) {
-      return `Available starting nodes: ${nodeIds.join(', ')}.`;
-    }
-
     return '';
-  }, [currentSimulationStep, nodeIds, searchAlgorithm, simulationRunning, simulationStepIndex, simulationSteps, startNode]);
+  }, [currentSimulationStep, goalNode, searchAlgorithm, simulationRunning, simulationStepIndex, simulationSteps, startNode]);
 
   const traversalOrder = useMemo(() => {
     if (!currentSimulationStep?.visited) {
@@ -122,6 +453,9 @@ function App() {
     }
     return currentSimulationStep.visited;
   }, [currentSimulationStep]);
+
+  const goalPath = useMemo(() => currentSimulationStep?.goalPath || [], [currentSimulationStep]);
+  const goalReached = Boolean(currentSimulationStep?.goalFound);
 
   const clearSimulationTimer = () => {
     if (simulationTimerRef.current) {
@@ -295,6 +629,63 @@ function App() {
     }
   };
 
+  const handleEditNode = (nodeId, currentHeuristicValue) => {
+    stopSimulation();
+    setSimulationSteps([]);
+    setSimulationStepIndex(-1);
+    setSimulationError('');
+
+    const nextNodeIdRaw = window.prompt('Edit node label', nodeId);
+    if (nextNodeIdRaw === null) {
+      return;
+    }
+
+    const nextNodeId = nextNodeIdRaw.trim();
+    if (!isValidNodeName(nextNodeId)) {
+      setSimulationError('Node label cannot contain spaces, commas, colons, arrows, or equals signs.');
+      return;
+    }
+
+    if (nextNodeId !== nodeId && nodeIds.includes(nextNodeId)) {
+      setSimulationError(`Node "${nextNodeId}" already exists.`);
+      return;
+    }
+
+    const heuristicDefault = currentHeuristicValue ?? '';
+    const nextHeuristicRaw = window.prompt(
+      'Edit heuristic value (leave blank to remove it)',
+      heuristicDefault === '' ? '' : String(heuristicDefault),
+    );
+
+    if (nextHeuristicRaw === null) {
+      return;
+    }
+
+    const normalizedHeuristicText = nextHeuristicRaw.trim();
+    if (normalizedHeuristicText && !Number.isFinite(Number(normalizedHeuristicText))) {
+      setSimulationError('Heuristic value must be a valid number.');
+      return;
+    }
+
+    const nextAdjacencyList = renameNodeInAdjacencyList(adjacencyList, nodeId, nextNodeId);
+    setAdjacencyList(nextAdjacencyList);
+
+    const heuristics = { ...(heuristicParseResult.heuristics || {}) };
+    if (nodeId !== nextNodeId && Object.prototype.hasOwnProperty.call(heuristics, nodeId)) {
+      delete heuristics[nodeId];
+    }
+
+    if (normalizedHeuristicText) {
+      heuristics[nextNodeId] = Number(normalizedHeuristicText);
+    } else {
+      delete heuristics[nextNodeId];
+    }
+
+    setHeuristicInput(serializeHeuristics(heuristics, heuristicInput));
+    setStartNode((current) => (current.trim() === nodeId ? nextNodeId : current));
+    setGoalNode((current) => (current.trim() === nodeId ? nextNodeId : current));
+  };
+
   const handleStartSimulation = () => {
     stopSimulation();
 
@@ -311,7 +702,22 @@ function App() {
       return;
     }
 
-    const result = createSearchSimulation(parseResult.elements, searchAlgorithm, normalizedStartNode);
+    if (heuristicParseResult.error) {
+      setSimulationError(heuristicParseResult.error);
+      setSimulationSteps([]);
+      setSimulationStepIndex(-1);
+      return;
+    }
+
+    const normalizedGoalNode = goalNode.trim();
+
+    const result = createSearchSimulation(
+      parseResult.elements,
+      searchAlgorithm,
+      normalizedStartNode,
+      normalizedGoalNode || undefined,
+      heuristicParseResult.heuristics || {},
+    );
     if (result.error) {
       setSimulationError(result.error);
       setSimulationSteps([]);
@@ -379,11 +785,8 @@ function App() {
               Graph Workspace
             </p>
             <h1 className="text-2xl font-semibold font-heading text-slate-950 dark:text-white py-0.5">
-            graphtrav
+            GraphTrav
             </h1>
-            <p className="text-[11px] md:text-xs text-slate-500 dark:text-slate-400 font-sans leading-relaxed">
-              Real-time graph visualization and traversal from adjacency-list input.
-            </p>
           </div>
           <Button 
             size="sm" 
@@ -443,6 +846,16 @@ function App() {
               setStartNode(value);
               setSimulationError('');
             }}
+            goalNode={goalNode}
+            onGoalNodeChange={(value) => {
+              setGoalNode(value);
+              setSimulationError('');
+            }}
+            heuristicInput={heuristicInput}
+            onHeuristicInputChange={(value) => {
+              setHeuristicInput(value);
+              setSimulationError('');
+            }}
             simulationSpeed={simulationSpeed}
             onSimulationSpeedChange={setSimulationSpeed}
             onStartSimulation={handleStartSimulation}
@@ -452,6 +865,8 @@ function App() {
             simulationSummary={simulationSummary}
             simulationError={simulationError}
             traversalOrder={traversalOrder}
+            goalPath={goalPath}
+            goalReached={goalReached}
           />
 
           {/* Quick Syntax Info Card */}
@@ -501,7 +916,7 @@ function App() {
         <div className="flex flex-col h-full min-h-0 overflow-hidden">
           {/* Visualization Graph Canvas */}
           <GraphCanvas
-            elements={parseResult.elements}
+            elements={graphElements}
             layoutName={layoutName}
             nodeColor={nodeColor}
             nodeShape={nodeShape}
@@ -509,8 +924,10 @@ function App() {
             edgeType={edgeType}
             directed={directed}
             showLabels={showLabels}
+            treeLayout={treeLayout}
             className="flex-1 min-h-0"
             simulationState={currentSimulationStep}
+            onNodeEdit={handleEditNode}
           />
         </div>
 
@@ -571,6 +988,19 @@ function App() {
                 value={edgeColor}
                 onChange={(e) => setEdgeColor(e.target.value)}
               />
+
+              {layoutName === 'breadthfirst' ? (
+                <TreeLayoutSettings
+                  nodeOptions={graphNodeOptions}
+                  value={treeLayout}
+                  onChange={(nextValue) => {
+                    setTreeLayout((currentValue) => ({
+                      ...currentValue,
+                      ...nextValue,
+                    }));
+                  }}
+                />
+              ) : null}
 
               <div className="flex flex-col gap-3 mt-2 border-t border-slate-100 dark:border-slate-800/80 pt-4">
                 <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300 select-none">

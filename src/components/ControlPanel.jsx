@@ -53,6 +53,10 @@ export function ControlPanel({
   onAlgorithmChange,
   startNode,
   onStartNodeChange,
+  goalNode,
+  onGoalNodeChange,
+  heuristicInput,
+  onHeuristicInputChange,
   simulationSpeed,
   onSimulationSpeedChange,
   onStartSimulation,
@@ -62,6 +66,8 @@ export function ControlPanel({
   simulationSummary,
   simulationError,
   traversalOrder = [],
+  goalPath = [],
+  goalReached = false,
 }) {
   const [newNodeName, setNewNodeName] = useState('');
   const [edgeSource, setEdgeSource] = useState('');
@@ -69,6 +75,12 @@ export function ControlPanel({
   const [edgeWeight, setEdgeWeight] = useState('');
   const [addNodeError, setAddNodeError] = useState('');
   const [addEdgeError, setAddEdgeError] = useState('');
+  const usesHeuristics = selectedAlgorithm === 'greedy' || selectedAlgorithm === 'astar';
+  const visitOrderLabel = selectedAlgorithm === 'dfs'
+    ? 'LIFO Visit Order'
+    : selectedAlgorithm === 'bfs'
+      ? 'FIFO Visit Order'
+      : 'Expansion Order';
 
   const handleAddNodeSubmit = (e) => {
     e.preventDefault();
@@ -115,7 +127,7 @@ export function ControlPanel({
   };
 
   return (
-    <Card title="Interactive Editor" subtitle="Quickly extend your adjacency list" className="mb-6">
+    <Card title="Interactive Editor" className="mb-6">
       <div className="flex flex-col gap-6">
         <div className="border-b border-slate-200 dark:border-slate-800 pb-5 last:border-b-0 last:pb-0">
           <h5 className="text-xs font-semibold text-slate-900 dark:text-white mb-3 font-heading uppercase tracking-[0.18em]">Search Simulation</h5>
@@ -141,6 +153,35 @@ export function ControlPanel({
             />
           </div>
 
+          <div className="flex flex-col gap-1.5 mb-3">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 font-heading">
+              Goal Node
+            </label>
+            <input
+              type="text"
+              value={goalNode}
+              onChange={(e) => onGoalNodeChange?.(e.target.value)}
+              placeholder="e.g. G"
+              className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 px-3 text-xs text-slate-900 dark:text-slate-100 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
+            />
+          </div>
+
+          {usesHeuristics && (
+            <div className="flex flex-col gap-1.5 mb-3">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 font-heading">
+                Heuristics
+              </label>
+              <textarea
+                value={heuristicInput}
+                onChange={(e) => onHeuristicInputChange?.(e.target.value)}
+                placeholder={'A: 6\nB: 4\nC: 3\nG: 0\n\nor\n\n[["A", 6], ["B", 4], ["G", 0]]'}
+                rows={4}
+                title={'Use Node: value, a JSON object like {"A":6,"B":4}, or a JSON list like [["A",6],["B",4]]. Missing values default to 0.'}
+                className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 px-3 text-xs text-slate-900 dark:text-slate-100 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15 resize-y"
+              />
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5 mb-4">
             <div className="flex items-center justify-between gap-3">
               <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 font-heading">
@@ -159,9 +200,6 @@ export function ControlPanel({
               onChange={(e) => onSimulationSpeedChange?.(Number(e.target.value))}
               className="w-full accent-slate-900 dark:accent-slate-100 cursor-pointer"
             />
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-              Higher speed advances the traversal faster.
-            </p>
           </div>
 
           <div className="flex gap-2">
@@ -191,8 +229,26 @@ export function ControlPanel({
             <p className="text-xs text-rose-500 mt-2 font-medium font-sans">{simulationError}</p>
           )}
 
+          {goalNode.trim() && !simulationError && (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+              <div className="flex items-center justify-between gap-3 mb-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Goal Path
+                </span>
+                <span className={`text-[11px] font-medium ${
+                  goalReached ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'
+                }`}>
+                  {goalReached ? 'Reached' : 'Not found'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-mono break-all">
+                {goalReached && goalPath.length > 0 ? goalPath.join(' -> ') : `No path to ${goalNode.trim()} yet.`}
+              </p>
+            </div>
+          )}
+
           {simulationSummary && !simulationError && (
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed font-sans">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-3 leading-relaxed font-sans">
               {simulationSummary}
             </p>
           )}
@@ -201,7 +257,7 @@ export function ControlPanel({
             <div className="mt-3">
               <div className="flex items-center justify-between gap-3 mb-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  {selectedAlgorithm === 'bfs' ? 'FIFO Visit Order' : 'LIFO Visit Order'}
+                  {visitOrderLabel}
                 </span>
                 <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
                   {traversalOrder.length} visited

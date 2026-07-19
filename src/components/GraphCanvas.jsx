@@ -2,6 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import cytoscape from 'cytoscape';
 import { Card } from './Ui/Card';
 import { Button } from './Ui/Button';
+import { createLayoutConfig, getViewportConfig } from '../utils/graphLayout';
+
+function createTopologySignature(elements) {
+  const nodes = [];
+  const edges = [];
+
+  elements.forEach((element) => {
+    if (element.data?.source && element.data?.target) {
+      edges.push(`${element.data.id || ''}:${element.data.source}->${element.data.target}`);
+    } else if (element.data?.id) {
+      nodes.push(element.data.id);
+    }
+  });
+
+  nodes.sort();
+  edges.sort();
+
+  return `${nodes.join('|')}__${edges.join('|')}`;
+}
 
 export function GraphCanvas({
   elements = [],
@@ -12,34 +31,92 @@ export function GraphCanvas({
   edgeType = 'bezier',
   directed = true,
   showLabels = true,
+  treeLayout,
   onNodeSelect,
+  onNodeEdit,
   simulationState = null,
   className = '',
 }) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
+  const layoutRef = useRef(null);
+  const lastTapRef = useRef({ nodeId: null, timestamp: 0 });
+  const topologySignatureRef = useRef('');
   const [selectedNodeInfo, setSelectedNodeInfo] = useState(null);
+  const viewportConfig = getViewportConfig(layoutName, treeLayout);
+
+  const teardownCy = () => {
+    if (layoutRef.current) {
+      layoutRef.current.stop();
+      layoutRef.current = null;
+    }
+
+    if (!cyRef.current) {
+      return;
+    }
+
+    cyRef.current.stop();
+    cyRef.current.nodes().stop();
+    cyRef.current.edges().stop();
+    cyRef.current.destroy();
+    cyRef.current = null;
+  };
 
   // Cytoscape initialization and updates
   useEffect(() => {
     if (!containerRef.current || elements.length === 0) {
-      if (cyRef.current) {
-        cyRef.current.destroy();
-        cyRef.current = null;
-      }
+      setSelectedNodeInfo(null);
+      teardownCy();
       return;
     }
 
     try {
+      const nextTopologySignature = createTopologySignature(elements);
+      const preservePositions = topologySignatureRef.current === nextTopologySignature && cyRef.current;
+      const previousPositions = preservePositions
+        ? cyRef.current.nodes().reduce((positions, node) => {
+            positions[node.id()] = { ...node.position() };
+            return positions;
+          }, {})
+        : {};
+
+      teardownCy();
+
+      const cyElements = JSON.parse(JSON.stringify(elements));
+      if (preservePositions) {
+        cyElements.forEach((element) => {
+          if (!element.data?.source && previousPositions[element.data?.id]) {
+            element.position = previousPositions[element.data.id];
+          }
+        });
+      }
+
+      const layout = preservePositions
+        ? {
+            name: 'preset',
+            fit: false,
+          }
+        : createLayoutConfig({
+            layoutName,
+            elements,
+            treeLayout,
+            animate: elements.length < 100,
+            animationDuration: 400,
+            fit: true,
+            padding: viewportConfig.fitPadding,
+          });
+
       const cy = cytoscape({
         container: containerRef.current,
-        elements: JSON.parse(JSON.stringify(elements)), // Deep copy to avoid mutating props
+        elements: cyElements,
+        minZoom: viewportConfig.minZoom,
+        maxZoom: viewportConfig.maxZoom,
         style: [
           {
             selector: 'node',
             style: {
               'background-color': nodeColor,
-              'label': showLabels ? 'data(label)' : '',
+              'label': showLabels ? 'data(displayLabel)' : '',
               'shape': nodeShape,
               'width': '35px',
               'height': '35px',
@@ -52,6 +129,23 @@ export function GraphCanvas({
               'border-color': '#ffffff',
               'transition-property': 'background-color, border-color, border-width, opacity',
               'transition-duration': '0.2s',
+            },
+          },
+          {
+            selector: 'node[heuristicLabel != ""]',
+            style: {
+              'width': '38px',
+              'height': '38px',
+              'text-valign': 'bottom',
+              'text-halign': 'center',
+              'text-margin-y': 8,
+              'background-image': 'data(heuristicBadgeImage)',
+              'background-image-opacity': 1,
+              'background-fit': 'contain',
+              'background-width': '72%',
+              'background-height': '72%',
+              'background-clip': 'none',
+              'background-image-containment': 'over',
             },
           },
           {
@@ -153,27 +247,69 @@ export function GraphCanvas({
               'opacity': 1,
             },
           },
+          {
+            selector: '.sim-goal',
+            style: {
+              'background-color': '#22c55e',
+              'border-color': '#ffffff',
+              'border-width': '4px',
+              'opacity': 1,
+            },
+          },
+          {
+            selector: 'node.sim-goal-path',
+            style: {
+              'background-color': '#14b8a6',
+              'border-color': '#ffffff',
+              'border-width': '4px',
+              'opacity': 1,
+            },
+          },
+          {
+            selector: 'edge.sim-goal-path',
+            style: {
+              'line-color': '#14b8a6',
+              'target-arrow-color': '#14b8a6',
+              'width': 5,
+              'opacity': 1,
+            },
+          },
         ],
-        layout: {
-          name: layoutName,
-          animate: elements.length < 100,
-          animationDuration: 400,
-          fit: true,
-          padding: 50,
-          nodeRepulsion: () => 4500,
-          idealEdgeLength: () => 50,
-        },
+        layout: { name: 'preset' },
         userZoomingEnabled: true,
         userPanningEnabled: true,
         boxSelectionEnabled: false,
       });
 
       cyRef.current = cy;
+      topologySignatureRef.current = nextTopologySignature;
+
+      const initialLayout = cy.layout(layout);
+      layoutRef.current = initialLayout;
+      initialLayout.one('layoutstop', () => {
+        if (layoutRef.current === initialLayout) {
+          layoutRef.current = null;
+        }
+      });
+      initialLayout.run();
 
       // Event: tap node
       cy.on('tap', 'node', (evt) => {
         const node = evt.target;
         const nodeId = node.id();
+        const now = Date.now();
+        const previousTap = lastTapRef.current;
+        if (
+          onNodeEdit
+          && previousTap.nodeId === nodeId
+          && now - previousTap.timestamp <= 300
+        ) {
+          onNodeEdit(nodeId, node.data('heuristicLabel'));
+          lastTapRef.current = { nodeId: null, timestamp: 0 };
+          return;
+        }
+
+        lastTapRef.current = { nodeId, timestamp: now };
         const outgoers = node.outgoers('edge');
         const incomers = node.incomers('edge');
         const neighbors = node.neighborhood('node');
@@ -213,6 +349,7 @@ export function GraphCanvas({
       // Event: tap background
       cy.on('tap', (evt) => {
         if (evt.target === cy) {
+          lastTapRef.current = { nodeId: null, timestamp: 0 };
           cy.elements().removeClass('faded').removeClass('highlighted').removeClass('neighbor');
           setSelectedNodeInfo(null);
           if (onNodeSelect) {
@@ -222,15 +359,12 @@ export function GraphCanvas({
       });
 
       return () => {
-        if (cyRef.current) {
-          cyRef.current.destroy();
-          cyRef.current = null;
-        }
+        teardownCy();
       };
     } catch (err) {
       console.error("Cytoscape render error: ", err);
     }
-  }, [elements, layoutName, nodeColor, nodeShape, edgeColor, edgeType, directed, showLabels, onNodeSelect]);
+  }, [elements, layoutName, nodeColor, nodeShape, edgeColor, edgeType, directed, showLabels, treeLayout, onNodeEdit, onNodeSelect]);
 
   useEffect(() => {
     if (!cyRef.current) {
@@ -238,7 +372,7 @@ export function GraphCanvas({
     }
 
     const cy = cyRef.current;
-    cy.elements().removeClass('sim-visited sim-traversed sim-frontier sim-current');
+    cy.elements().removeClass('sim-visited sim-traversed sim-frontier sim-current sim-goal sim-goal-path');
 
     if (!simulationState) {
       return;
@@ -258,8 +392,20 @@ export function GraphCanvas({
       cy.getElementById(edgeId).addClass('sim-traversed');
     });
 
+    simulationState.goalPath?.forEach((nodeId) => {
+      cy.getElementById(nodeId).addClass('sim-goal-path');
+    });
+
+    simulationState.goalPathEdges?.forEach((edgeId) => {
+      cy.getElementById(edgeId).addClass('sim-goal-path');
+    });
+
     if (simulationState.via) {
       cy.getElementById(simulationState.via).addClass('sim-current');
+    }
+
+    if (simulationState.goalNode) {
+      cy.getElementById(simulationState.goalNode).addClass('sim-goal');
     }
 
     cy.getElementById(simulationState.node).removeClass('sim-visited').addClass('sim-current');
@@ -283,7 +429,7 @@ export function GraphCanvas({
       cyRef.current.fit();
       cyRef.current.animate({
         fit: {
-          padding: 50
+          padding: viewportConfig.fitPadding
         },
         duration: 300
       });
@@ -292,12 +438,24 @@ export function GraphCanvas({
 
   const handleResetLayout = () => {
     if (cyRef.current) {
-      const layout = cyRef.current.layout({
-        name: layoutName,
+      if (layoutRef.current) {
+        layoutRef.current.stop();
+      }
+
+      const layout = cyRef.current.layout(createLayoutConfig({
+        layoutName,
+        elements,
+        treeLayout,
         animate: true,
         animationDuration: 500,
         fit: true,
-        padding: 50
+        padding: viewportConfig.fitPadding,
+      }));
+      layoutRef.current = layout;
+      layout.one('layoutstop', () => {
+        if (layoutRef.current === layout) {
+          layoutRef.current = null;
+        }
       });
       layout.run();
     }
@@ -325,14 +483,17 @@ export function GraphCanvas({
     <Card className={`p-0 overflow-hidden relative flex flex-col min-h-0 ${className}`} contentClassName="flex-1 min-h-0">
       <div className="flex h-full min-h-[420px] flex-col">
         <div className="relative flex-1 min-h-[420px] lg:min-h-0 bg-white text-slate-900">
-          {elements.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500 p-8 text-center select-none font-sans">
+          <div
+            ref={containerRef}
+            className={`outline-none w-full h-full ${elements.length === 0 ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
+          />
+
+          {elements.length === 0 && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 p-8 text-center select-none font-sans">
               <div className="mb-4 h-14 w-14 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" />
               <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-1 font-heading">No Graph Data</h3>
               <p className="max-w-xs text-xs leading-relaxed">Input a valid adjacency list on the left to visualize the graph.</p>
             </div>
-          ) : (
-            <div ref={containerRef} className="outline-none w-full h-full" />
           )}
 
           {elements.length > 0 && (
@@ -354,6 +515,7 @@ export function GraphCanvas({
               </Button>
             </div>
           )}
+
         </div>
 
         {selectedNodeInfo && (
